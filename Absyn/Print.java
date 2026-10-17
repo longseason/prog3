@@ -1,4 +1,5 @@
 package Absyn;
+import Symbol.Symbol;
 
 public class Print {
 
@@ -15,7 +16,7 @@ public class Print {
     out.print(s);
   }
 
-  void say(int i) {
+  void say(long i) { // intexp is a long, so changing here to reflect that
     out.print(i);
   }
 
@@ -27,60 +28,60 @@ public class Print {
     out.println(s);
   }
 
-  void prVar(SimpleVar v, int d) {
-    say("SimpleVar("); say(v.name.toString()); say(")");
-  }
-  
-  void prVar(FieldVar v, int d) {
-    sayln("FieldVar(");
-    prVar(v.var, d+1); sayln(",");
-    indent(d+1); say(v.field.toString()); say(")");
+  // returns a string rep of symbol or null if symbol is null
+  String sym(Symbol s) {
+    return s == null ? "null" : s.toString();
   }
 
-  void prVar(SubscriptVar v, int d) {
-    sayln("SubscriptVar(");
-    prVar(v.var, d+1); sayln(",");
-    prExp(v.index, d+1); say(")");
-  }
+// this code was done using ai to save time
+  static final String[] binaryOps = {
+    "MUL", "DIV", "MOD", "PLUS", "MINUS", "SHL", "SHR", "LT", "GT", "LE", "GE",
+    "EQ", "NE", "BITAND", "BITXOR", "BITOR", "AND", "OR"
+  };
+  static final String[] unOps = {
+    "NEG", "POS", "NOT", "BITNOT", "DEREF", "ADDR", "PREINC", "PREDEC", "POSTINC", "POSTDEC" 
+  };
+  static final String[] assignOps = {
+    "ASSIGN", "MUL", "DIV", "MOD", "PLUS", "MINUS", "SHL", "SHR", "AND", "XOR", "OR" 
+  };
 
-  /* Print A_var types. Indent d spaces. */
-  void prVar(Var v, int d) {
-    indent(d);
-    if (v instanceof SimpleVar) prVar((SimpleVar) v, d);
-    else if (v instanceof FieldVar) prVar((FieldVar) v, d);
-    else if (v instanceof SubscriptVar) prVar((SubscriptVar) v, d);
-    else throw new Error("Print.prVar");
+  void prExp(IdExp e, int d) {
+    say("IdExp(");
+    say(sym(e.name));
+    say(")");
   }
   
-  void prExp(OpExp e, int d) {
-    sayln("OpExp(");
-    indent(d+1); 
-    switch(e.oper) {
-    case OpExp.PLUS: say("PLUS"); break;
-    case OpExp.MINUS: say("MINUS"); break;
-    case OpExp.MUL: say("MUL"); break;
-    case OpExp.DIV: say("DIV"); break;
-    case OpExp.EQ: say("EQ"); break;
-    case OpExp.NE: say("NE"); break;
-    case OpExp.LT: say("LT"); break;
-    case OpExp.LE: say("LE"); break;
-    case OpExp.GT: say("GT"); break;
-    case OpExp.GE: say("GE"); break;
-    default:
-      throw new Error("Print.prExp.OpExp");
+  void prExp(MemberExp e, int d) {
+    if (e.arrow) {
+      sayln("ArrowExp(");
+    } else {
+      sayln("DotExp(");
     }
+    prExp(e.record, d+1);
     sayln(",");
-    prExp(e.left, d+1); sayln(",");
-    prExp(e.right, d+1); say(")");
-  }
-
-  void prExp(VarExp e, int d) {
-    sayln("VarExp("); prVar(e.var, d+1);
+    indent(d+1);
+    say(sym(e.field));
     say(")");
   }
 
-  void prExp(NilExp e, int d) {
-    say("NilExp()");
+  void prExp(SubscriptExp e, int d) {
+    sayln("SubscriptExp(");
+    prExp(e.array, d+1);
+    sayln(",");
+    prExp(e.index, d+1);
+    say(")");
+  } 
+  
+// modified so that instead of having 18 switch cases, it uses a lookup instead
+  void prExp(BinOpExp e, int d) {
+    sayln("BinOpExp(");
+    indent(d+1);
+    say(binaryOps[e.operator]);
+    sayln(",");
+    prExp(e.left, d+1);
+    sayln(",");
+    prExp(e.right, d+1);
+    say(")");
   }
 
   void prExp(IntExp e, int d) {
@@ -96,161 +97,248 @@ public class Print {
     prExplist(e.args, d+1); say(")");
   }
 
-  void prExp(RecordExp e, int d) {
-    say("RecordExp("); say(e.typ.toString());  sayln(",");
-    prFieldExpList(e.fields, d+1); say(")");
-  }
-
-  void prExp(SeqExp e, int d) {
-    sayln("SeqExp(");
-    prExplist(e.list, d+1); say(")");
-  }
-
   void prExp(AssignExp e, int d) {
     sayln("AssignExp(");
-    prVar(e.var, d+1); sayln(",");
-    prExp(e.exp, d+1); say(")");
-  }
-  
-  void prExp(IfExp e, int d) {
-    sayln("IfExp(");
-    prExp(e.test, d+1); sayln(",");
-    prExp(e.thenclause, d+1);
-    if (e.elseclause!=null) { /* else is optional */
-      sayln(",");
-      prExp(e.elseclause, d+1);
-    }
+    indent(d+1);
+    say(assignOps[e.operator]);
+    sayln(",");
+    prExp(e.left, d+1);
+    sayln(",");
+    prExp(e.right, d+1);
     say(")");
   }
 
-  void prExp(WhileExp e, int d) {
-    sayln("WhileExp(");
-    prExp(e.test, d+1); sayln(",");
-    prExp(e.body, d+1); say(")");
+  // for c, this is for char literals
+  void prExp(CharExp e, int d) {
+    say("CharExp(");
+    say(e.value);
+    say(")");
   }
 
-  void prExp(ForExp e, int d) {
-    sayln("ForExp("); 
-    indent(d+1); prDec(e.var, d+1); sayln(",");
-    prExp(e.hi, d+1); sayln(",");
-    prExp(e.body, d+1); say(")");
+  // for c, one operand operators
+  void prExp(UnOpExp e, int d) {
+    sayln("UnOpExp(");
+    indent(d+1);
+    say(unOps[e.operator]);
+    sayln(",");
+    prExp(e.exp, d+1);
+    say(")");
   }
 
-  void prExp(BreakExp e, int d) {
-    say("BreakExp()");
+// ternary operator
+  void prExp(CondExp e, int d) {
+    sayln("CondExp(");
+    prExp(e.test, d+1);
+    sayln(",");
+    prExp(e.thenExp, d+1);
+    sayln(",");
+    prExp(e.elseExp, d+1);
+    say(")");
   }
 
-  void prExp(LetExp e, int d) {
-    say("LetExp("); sayln("");
-    prDecList(e.decs, d+1); sayln(",");
-    prExp(e.body, d+1); say(")");
+  void prExp(CastExp e, int d) {
+    sayln("CastExp(");
+    prType(e.type, d+1);
+    sayln(",");
+    prExp(e.exp, d+1);
+    say(")");
   }
 
-  void prExp(ArrayExp e, int d) {
-    say("ArrayExp("); say(e.typ.toString()); sayln(",");
-    prExp(e.size, d+1); sayln(",");
-    prExp(e.init, d+1); say(")");
+  void prExp(SizeofExp e, int d) {
+    sayln("SizeofExp(");
+    prExp(e.exp, d+1);
+    say(")");
+  }
+
+  void prExp(SizeofTypeExp e, int d) {
+    sayln("SizeofTypeExp(");
+    prType(e.type, d+1);
+    say(")");
+  }
+
+  void prExp(CommaExp e, int d) {
+    sayln("CommaExp(");
+    prExp(e.left, d+1);
+    sayln(",");
+    prExp(e.right, d+1);
+    say(")");
   }
 
   /* Print Exp class types. Indent d spaces. */
   public void prExp(Exp e, int d) {
     indent(d);
-    if (e instanceof OpExp) prExp((OpExp)e, d);
-    else if (e instanceof VarExp) prExp((VarExp) e, d);
-    else if (e instanceof NilExp) prExp((NilExp) e, d);
+    if (e == null) say("null");
+    // kept
     else if (e instanceof IntExp) prExp((IntExp) e, d);
     else if (e instanceof StringExp) prExp((StringExp) e, d);
     else if (e instanceof CallExp) prExp((CallExp) e, d);
-    else if (e instanceof RecordExp) prExp((RecordExp) e, d);
-    else if (e instanceof SeqExp) prExp((SeqExp) e, d);
     else if (e instanceof AssignExp) prExp((AssignExp) e, d);
-    else if (e instanceof IfExp) prExp((IfExp) e, d);
-    else if (e instanceof WhileExp) prExp((WhileExp) e, d);
-    else if (e instanceof ForExp) prExp((ForExp) e, d);
-    else if (e instanceof BreakExp) prExp((BreakExp) e, d);
-    else if (e instanceof LetExp) prExp((LetExp) e, d);
-    else if (e instanceof ArrayExp) prExp((ArrayExp) e, d);
+
+    // new 
+    else if (e instanceof BinOpExp) prExp((BinOpExp) e, d);
+    else if (e instanceof IdExp) prExp((IdExp) e, d);
+    else if (e instanceof MemberExp) prExp((MemberExp) e, d);
+    else if (e instanceof SubscriptExp) prExp((SubscriptExp) e, d);
+    else if (e instanceof CharExp) prExp((CharExp) e, d);
+    else if (e instanceof UnOpExp) prExp((UnOpExp) e, d);
+    else if (e instanceof CondExp) prExp((CondExp) e, d);
+    else if (e instanceof CastExp) prExp((CastExp) e, d);
+    else if (e instanceof SizeofExp) prExp((SizeofExp) e, d);
+    else if (e instanceof SizeofTypeExp) prExp((SizeofTypeExp) e, d);
+    else if (e instanceof CommaExp) prExp((CommaExp) e, d);
     else throw new Error("Print.prExp");
   }
 
-  void prDec(FunctionDec d, int i) {
-    say("FunctionDec(");
-    if (d!=null) {
-      sayln(d.name.toString());
-      prFieldlist(d.params, i+1); sayln(",");
-      if (d.result!=null) {
-	indent(i+1); sayln(d.result.name.toString());
-      }
-      prExp(d.body, i+1); sayln(",");
-      indent(i+1); prDec(d.next, i+1);
+  // adds desc + full type 
+  void prDec(FunDec d, int i) {
+    sayln("FunDec(");
+    prDescList(f.desc, i+1);
+    sayln(",");
+    prType(f.type, i+1);
+    sayln(",");
+    indent(i+1);
+    say(sym(f.name));
+    sayln(",");
+    prParamList(f.params, i+1);
+    sayln(",");
+    prStm(f.body, i+1);
+    say(")");
+  }
+
+  // adds desc + full type
+  void prDec(VarDec d, int i) {
+    sayln("VarDec(");
+    prDescList(v.desc, i+1);
+    sayln(",");
+    prType(v.type, i+1);
+    sayln(",");
+    indent(i+1);
+    say(sym(v.name));
+    sayln(",");
+    prInit(v.init, i+1);
+    say(")");
+  }
+
+  // type and a name
+  void prDec(TypeDec d, int i) {
+    sayln("TypedefDec(");
+    prType(t.type, i+1);
+    sayln(",");
+    indent(i+1);
+    say(sym(t.name));
+    say(")");
+  }
+
+  // for function protyping in c
+  void prDec(FunProtoDec f, int i) {
+    sayln("FunProtoDec(");
+    prDescList(f.desc, i+1);
+    sayln(",");
+    prType(f.type, i+1);
+    sayln(",");
+    indent(i+1);
+    say(sym(f.name));
+    sayln(",");
+    prParamList(f.params, i+1);
+    say(")");
+  }
+
+  //. for stucts and union in c
+  void prDec(StructUnionDec s, int i) {
+    if (s.isUnion) {
+      sayln("UnionDec(");
+    } else {
+      sayln("StructDec(");
+    }
+    prDescList(s.desc, i+1);
+    sayln(",");
+    indent(i+1);
+    say(sym(s.name));
+    sayln(",");
+    if (s.members == null) {
+      indent(i+1);
+      say("null");
+    } else {
+      prDecList(s.members, i+1);
     }
     say(")");
   }
 
-  void prDec(VarDec d, int i) {
-    say("VarDec("); say(d.name.toString()); sayln(",");
-    if (d.typ!=null) {
-      indent(i+1); say(d.typ.name.toString());  sayln(",");
-    }
-    prExp(d.init, i+1); sayln(",");
-    indent(i+1); say(d.escape); say(")"); 
+  // for enum in c with list of enumerators
+  void prDec(EnumDec e, int i) {
+    sayln("EnumDec(");
+    indent(i+1);
+    say(sym(e.name));
+    sayln(",");
+    prEnumList(e.list, i+1);
+    say(")");
   }
 
-  void prDec(TypeDec d, int i) {
-    if (d!=null) {
-      say("TypeDec("); say(d.name.toString()); sayln(",");
-      prTy(d.ty, i+1); 
-      if (d.next!=null) {
-	sayln(","); indent(i+1); prDec(d.next, i+1);
-      }
-      say(")");
-    }
-  }
-
+  // modified for c instead of tiger 
   void prDec(Dec d, int i) {
     indent(i);
-    if (d instanceof FunctionDec) prDec((FunctionDec) d, i);
+    if (d == null) say("null");
     else if (d instanceof VarDec) prDec((VarDec) d, i);
-    else if (d instanceof TypeDec) prDec((TypeDec) d, i);
+    else if (d instanceof FunDec) prDec((FunDec) d, i);
+    else if (d instanceof TypedefDec) prDec((TypedefDec) d, i);
+    // new
+    else if (d instanceof FunProtoDec) prDec((FunProtoDec) d, i);
+    else if (d instanceof StructUnionDec) prDec((StructUnionDec) d, i);
+    else if (d instanceof EnumDec) prDec((EnumDec) d, i);
     else throw new Error("Print.prDec");
   }
 
-  void prTy(NameTy t, int i) {
-    say("NameTy("); say(t.name.toString()); say(")");
-  }
-
-  void prTy(RecordTy t, int i) {
-    sayln("RecordTy(");
-    prFieldlist(t.fields, i+1); say(")");
-  }
-
-  void prTy(ArrayTy t, int i) {
-    say("ArrayTy("); say(t.typ.toString()); say(")");
-  }
-
-  void prTy(Ty t, int i) {
-    if (t!=null) {
-      indent(i);
-      if (t instanceof NameTy) prTy((NameTy) t, i);
-      else if (t instanceof RecordTy) prTy((RecordTy) t, i);
-      else if (t instanceof ArrayTy) prTy((ArrayTy) t, i);
-      else throw new Error("Print.prTy");
-    }
-  }
-
-  void prFieldlist(FieldList f, int d) {
-    indent(d);
-    say("FieldList("); 
-    if (f!=null) {
-      sayln("");
-      indent(d+1); say(f.name.toString()); sayln(",");
-      indent(d+1); say(f.typ.toString()); sayln(",");
-      indent(d+1); say(f.escape);
-      sayln(",");
-      prFieldlist(f.tail, d+1);
-    }
+  void prType(NameType t, int i) {
+    say("NameType(");
+    say(sym(t.name));
     say(")");
   }
+
+  void prType(ArrayType t, int i) {
+    sayln("ArrayType(");
+    prType(t.base, i+1);
+    sayln(",");
+    prExp(t.size, i+1);
+    say(")");
+  }
+
+  // pointer wraps the base type for C
+  void prType(PointerType t, int i) {
+    sayln("PointerType(");
+    prType(t.base, i+1);
+    say(")");
+  }
+
+  // stuct and union foo used as type
+  void prType(StructType t, int i) {
+    if (t.isUnion) {
+      say("UnionType(");
+    } else {
+      say("StructType(");
+    }
+    say(sym(t.name));
+    say(")");
+  }
+
+  void prType(EnumType t, int i) {
+    say("EnumType(");
+    say(sym(t.name));
+    say(")");
+  }
+
+// dispatcher with 3 new types for C
+  void prTy(Type t, int i) {
+    indent(i);
+    if (t==null) say("null");
+      if (t instanceof NameTy) prTy((NameTy) t, i);
+      else if (t instanceof NameType) prType((NameType) t, i);
+      else if (t instanceof ArrayType) prType((ArrayType) t, i);
+      else if (t instanceof PointerType) prType((PointerType) t, i);
+      else if (t instanceof StructType) prType((StructType) t, i);
+      else if (t instanceof EnumType) prType((EnumType) t, i);
+      else throw new Error("Print.prTy");
+  }
+
 
   void prExplist(ExpList e, int d) {
     indent(d);
@@ -265,7 +353,8 @@ public class Print {
     say(")");
   }
 
-  void prDecList(DecList v, int d) {
+  // changed to public so it can be called outside
+  public void prDecList(DecList v, int d) {
     indent(d);
     say("DecList("); 
     if (v!=null) {
@@ -276,15 +365,120 @@ public class Print {
     say(")");
   }
 
-  void prFieldExpList(FieldExpList f, int d) {
+  //  statement list inside {} for C
+  void prStmList(StatementList s, int d) {
     indent(d);
-    say("FieldExpList("); 
-    if (f!=null) {
+    say("StatementList(");
+    if (s != null) {
       sayln("");
-      indent(d+1); say(f.name.toString()); sayln(",");
-      prExp(f.init, d+1); sayln(",");
-      prFieldExpList(f.tail, d+1);
+      prStm(s.head, d+1);
+      if (s.tail != null) {
+        sayln(",");
+        prStmList(s.tail, d+1);
+      }
     }
     say(")");
   }
+
+  // one line descriptors
+  void prDescList(DescriptorList l, int d) {
+    indent(d);
+    say("Descriptors(");
+    while (l != null) {
+      say(sym(l.head));
+      if (l.tail != null) {
+        say(", ");
+      }
+      l = l.tail;
+    }
+    say(")");
+
+  // parameter list for FunDec
+  void prParamList(ParamList p, int d) {
+    indent(d);
+    say("ParamList(");
+    if (p != null) {
+      sayln("");
+      prParam(p.head, d+1);
+      if (p.tail != null) {
+        sayln(",");
+        prParamList(p.tail, d+1);
+      }
+    }
+    say(")");
+  }
+
+  void prParam(Param p, int d) {
+    indent(d);
+    if (p.ellipsis) {
+      say("Ellipsis");
+    } else {
+      sayln("Param(");
+      prType(p.type, d+1);
+      sayln(",");
+      indent(d+1);
+      say(sym(p.name));
+      say(")");
+    }
+  }
+
+  void prInit(Initializer init, int d) {
+    indent(d);
+    if (init == null) {
+      say("null");
+    } else if (init instanceof ExpInit) {
+      ExpInit e = (ExpInit) init;
+      sayln("ExpInit(");
+      prExp(e.exp, d+1);
+      say(")");
+    } else if (init instanceof ListInit) {
+      ListInit l = (ListInit) init;
+      sayln("ListInit(");
+      prInitList(l.list, d+1);
+      say(")");
+    } else {
+      throw new Error("Print.prInit");
+    }
+  }
+
+  void prInitList(InitializerList l, int d) {
+    indent(d);
+    say("InitializerList(");
+    if (l != null) {
+      sayln("");
+      prInit(l.head, d+1);
+      if (l.tail != null) {
+        sayln(",");
+        prInitList(l.tail, d+1);
+      }
+    }
+    say(")");
+  }
+
+  void prEnumList(EnumeratorList l, int d) {
+    indent(d);
+    say("EnumeratorList(");
+    if (l != null) {
+      sayln("");
+      prEnumerator(l.head, d+1);
+      if (l.tail != null) {
+        sayln(",");
+        prEnumList(l.tail, d+1);
+      }
+    }
+    say(")");
+  }
+
+  void prEnumerator(Enumerator e, int d) {
+    indent(d);
+    say("Enumerator(");
+    say(sym(e.name));
+    if (e.value != null) {
+      sayln(",");
+      prExp(e.value, d+1);
+    }
+    say(")");
+  }
+
+
 }
