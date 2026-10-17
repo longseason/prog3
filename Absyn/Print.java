@@ -190,7 +190,7 @@ public class Print {
   }
 
   // adds desc + full type 
-  void prDec(FunDec d, int i) {
+  void prDec(FunDec f, int i) {
     sayln("FunDec(");
     prDescList(f.desc, i+1);
     sayln(",");
@@ -206,7 +206,7 @@ public class Print {
   }
 
   // adds desc + full type
-  void prDec(VarDec d, int i) {
+  void prDec(VarDec v, int i) {
     sayln("VarDec(");
     prDescList(v.desc, i+1);
     sayln(",");
@@ -220,7 +220,7 @@ public class Print {
   }
 
   // type and a name
-  void prDec(TypeDec d, int i) {
+  void prDec(TypedefDec t, int i) {
     sayln("TypedefDec(");
     prType(t.type, i+1);
     sayln(",");
@@ -327,10 +327,10 @@ public class Print {
   }
 
 // dispatcher with 3 new types for C
-  void prTy(Type t, int i) {
+  void prType(Type t, int i) {
     indent(i);
     if (t==null) say("null");
-      if (t instanceof NameTy) prTy((NameTy) t, i);
+      if (t instanceof NameType) prType((NameType) t, i);
       else if (t instanceof NameType) prType((NameType) t, i);
       else if (t instanceof ArrayType) prType((ArrayType) t, i);
       else if (t instanceof PointerType) prType((PointerType) t, i);
@@ -392,6 +392,7 @@ public class Print {
       l = l.tail;
     }
     say(")");
+  }
 
   // parameter list for FunDec
   void prParamList(ParamList p, int d) {
@@ -480,5 +481,104 @@ public class Print {
     say(")");
   }
 
+// statements now
+  void prStm(ExpStatement s, int d) {
+    sayln("ExpStatement(");
+    prExp(s.exp, d+1);
+    say(")");
+  }
 
+  void prStm(ReturnStatement s, int d) {
+    sayln("ReturnStatement(");
+    prExp(s.exp, d+1);
+    say(")");
+  }
+
+  void prStm(BreakStatement s, int d) {
+    say("BreakStatement()");
+  }
+
+  void prStm(ContinueStatement s, int d) {
+    say("ContinueStatement()");
+  }
+
+  void prStm(GotoStatement s, int d) {
+    say("GotoStatement(");
+    say(sym(s.label));
+    say(")");
+  }
+
+  void prStm(LabeledStatement s, int d) {
+    sayln("LabeledStatement(");
+    indent(d+1);
+    say(sym(s.label));
+    sayln(",");
+    prStm(s.statement, d+1);
+    say(")");
+  }
+  // declaration statements
+  void prStm(CompoundStatement s, int d) {
+    sayln("CompoundStatement(");
+    prDecList(s.decs, d+1);
+    sayln(",");
+    prStmList(s.stms, d+1);
+    say(")");
+  }
+
+  // if else, prints null if else is empty
+  void prStm(IfElseStatement s, int d) {
+    sayln("IfElseStatement(");
+    prExp(s.test, d+1);
+    sayln(",");
+    prStm(s.thenClause, d+1);
+    sayln(",");
+    prStm(s.elseClause, d+1);
+    say(")");
+  }
+
+  void prStm(WhileStatement s, int d) {
+    sayln("WhileStatement(");
+    prExp(s.test, d+1);
+    sayln(",");
+    prStm(s.body, d+1);
+    say(")");
+  }
+
+  void prStm(DoWhileStatement s, int d) {
+    sayln("DoWhileStatement(");
+    prStm(s.body, d+1);
+    sayln(",");
+    prExp(s.test, d+1);
+    say(")");
+  }
+
+  void prStm(ForStatement s, int d) {
+    sayln("ForStatement(");
+    prExp(s.init, d+1);
+    sayln(",");
+    prExp(s.test, d+1);
+    sayln(",");
+    prExp(s.incr, d+1);
+    sayln(",");
+    prStm(s.body, d+1);
+    say(")");
+  }
+
+// statement dispatcher
+  public void prStm(Statement s, int d) {
+    indent(d);
+    if (s == null) say("null");
+    else if (s instanceof ExpStatement) prStm((ExpStatement) s, d);
+    else if (s instanceof CompoundStatement) prStm((CompoundStatement) s, d);
+    else if (s instanceof IfElseStatement) prStm((IfElseStatement) s, d);
+    else if (s instanceof WhileStatement) prStm((WhileStatement) s, d);
+    else if (s instanceof DoWhileStatement) prStm((DoWhileStatement) s, d);
+    else if (s instanceof ForStatement) prStm((ForStatement) s, d);
+    else if (s instanceof ReturnStatement) prStm((ReturnStatement) s, d);
+    else if (s instanceof BreakStatement) prStm((BreakStatement) s, d);
+    else if (s instanceof ContinueStatement) prStm((ContinueStatement) s, d);
+    else if (s instanceof GotoStatement) prStm((GotoStatement) s, d);
+    else if (s instanceof LabeledStatement) prStm((LabeledStatement) s, d);
+    else throw new Error("Print.prStm");
+  }
 }
