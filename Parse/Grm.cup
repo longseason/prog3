@@ -1,50 +1,633 @@
 package Parse;
 
-action code {: static Symbol.Symbol sym(String s) {
-	         return Symbol.Symbol.symbol(s);
-	        }
-	    :};
+/* ======================================================================
+   CSC 4351 Project 2 - CUP grammar for ANSI C (C89) with the course's
+   simplified declaration syntax.
 
-parser code  {: 
+   Sections:  1. terminals / precedence
+              2. declarations   (course "Changes to C Declarations")
+              3. statements     (C89 section 3.6, no switch/case/default)
+              4. expressions    (C89 section 3.3, no casts, no sizeof expr)
+
+   List rules are written left-recursively, like the handout, and use the
+   append() helpers below to build Abdul's head/tail lists in source order.
+   ====================================================================== */
+
+action code {:
+  static Symbol.Symbol sym(String s) {
+    return Symbol.Symbol.symbol(s);
+  }
+
+  /* The lexer returns INTLIT as its source text ("42", "0x1F", "017UL").
+     Strip the u/U/l/L suffix and convert from the right base. */
+  static long intValue(String text) {
+    String s = text;
+    while (s.length() > 0 && "uUlL".indexOf(s.charAt(s.length() - 1)) >= 0)
+      s = s.substring(0, s.length() - 1);
+    try {
+      if (s.startsWith("0x") || s.startsWith("0X")) return Long.parseLong(s.substring(2), 16);
+      if (s.length() > 1 && s.charAt(0) == '0')     return Long.parseLong(s.substring(1), 8);
+      return Long.parseLong(s);
+    } catch (NumberFormatException e) {
+      return 0;
+    }
+  }
+
+  /* type = type_name, then pointer stars, then array brackets.
+     int**[10][33] becomes ArrayType(ArrayType(PointerType(PointerType(int)), 33), 10):
+     the first bracket is the outermost array, as in C. */
+  static Absyn.Type buildType(Absyn.Type base, int pointers, Absyn.ExpList dims) {
+    Absyn.Type t = base;
+    for (int i = 0; i < pointers; i++)
+      t = new Absyn.PointerType(base.pos, t);
+    java.util.ArrayList<Absyn.Exp> sizes = new java.util.ArrayList<Absyn.Exp>();
+    for (Absyn.ExpList l = dims; l != null; l = l.tail) sizes.add(l.head);
+    for (int i = sizes.size() - 1; i >= 0; i--)
+      t = new Absyn.ArrayType(base.pos, t, sizes.get(i));   /* size null = [] */
+    return t;
+  }
+
+  /* append x to the end of a head/tail list (l may be null) */
+  static Absyn.ExpList append(Absyn.ExpList l, Absyn.Exp x) {
+    Absyn.ExpList n = new Absyn.ExpList(x, null);
+    if (l == null) return n;
+    Absyn.ExpList p = l; while (p.tail != null) p = p.tail; p.tail = n; return l;
+  }
+  static Absyn.DecList append(Absyn.DecList l, Absyn.Dec x) {
+    Absyn.DecList n = new Absyn.DecList(x, null);
+    if (l == null) return n;
+    Absyn.DecList p = l; while (p.tail != null) p = p.tail; p.tail = n; return l;
+  }
+  static Absyn.StatementList append(Absyn.StatementList l, Absyn.Statement x) {
+    Absyn.StatementList n = new Absyn.StatementList(x, null);
+    if (l == null) return n;
+    Absyn.StatementList p = l; while (p.tail != null) p = p.tail; p.tail = n; return l;
+  }
+  static Absyn.ParamList append(Absyn.ParamList l, Absyn.Param x) {
+    Absyn.ParamList n = new Absyn.ParamList(x, null);
+    if (l == null) return n;
+    Absyn.ParamList p = l; while (p.tail != null) p = p.tail; p.tail = n; return l;
+  }
+  static Absyn.InitializerList append(Absyn.InitializerList l, Absyn.Initializer x) {
+    Absyn.InitializerList n = new Absyn.InitializerList(x, null);
+    if (l == null) return n;
+    Absyn.InitializerList p = l; while (p.tail != null) p = p.tail; p.tail = n; return l;
+  }
+  static Absyn.EnumeratorList append(Absyn.EnumeratorList l, Absyn.Enumerator x) {
+    Absyn.EnumeratorList n = new Absyn.EnumeratorList(x, null);
+    if (l == null) return n;
+    Absyn.EnumeratorList p = l; while (p.tail != null) p = p.tail; p.tail = n; return l;
+  }
+:};
+
+parser code  {:
   Lexer lexer;
 
   public void syntax_error(java_cup.runtime.Symbol current) {
-   report_error("Syntax error (" + current.sym + ")", current);
+    report_error("Syntax error at " + tokenName(current.sym), current);
   }
 
   ErrorMsg.ErrorMsg errorMsg;
 
   public void report_error(String message, java_cup.runtime.Symbol info) {
-      errorMsg.error(info.left, message);
+    errorMsg.error(info.left, message);
   }
 
   public Grm(Lexer l, ErrorMsg.ErrorMsg err) {
     this();
-    errorMsg=err;
-    lexer=l;
+    errorMsg = err;
+    lexer = l;
+  }
+
+  /* Name the offending token in error messages instead of printing its number. */
+  static String tokenName(int s) {
+    try {
+      java.lang.reflect.Field[] fs = sym.class.getDeclaredFields();
+      for (int i = 0; i < fs.length; i++)
+        if (fs[i].getInt(null) == s) return fs[i].getName();
+    } catch (Exception e) { }
+    return "#" + s;
+  }
+
+  /* Fix for a bug in the CUP v0.10g runtime's error recovery.
+     lr_parser.read_lookahead() leaves cur_token pointing one token PAST the
+     parse-ahead buffer, but restart_lookahead() and parse_lookahead() assume
+     it is the LAST buffered token and call scan() again. The result: one
+     real token was silently thrown away after every recovered error, so the
+     declaration or statement after an error was lost. This version fills
+     the buffer the way the rest of the runtime expects. */
+  protected void read_lookahead() throws java.lang.Exception {
+    lookahead = new java_cup.runtime.Symbol[error_sync_size()];
+    for (int i = 0; i < error_sync_size(); i++) {
+      if (i > 0) cur_token = scan();
+      lookahead[i] = cur_token;
+    }
+    lookahead_pos = 0;
   }
 :};
 
 scan with {: return lexer.nextToken(); :};
 
-terminal String ID, STRING;
-terminal Integer INT;
-terminal COMMA, COLON, SEMICOLON, LPAREN, RPAREN, LBRACK, RBRACK, 
-	LBRACE, RBRACE, DOT, PLUS, MINUS, TIMES, DIVIDE, EQ, NEQ, LT, LE, 
-	GT, GE, AND, OR, ASSIGN, ARRAY, IF, THEN, ELSE, WHILE, FOR, TO,
-	DO, LET, IN, END, OF, BREAK, NIL, FUNCTION, VAR, TYPE;
+/* ======================================================================
+   1. Terminals - names must match what Parse/C.lex returns, because CUP
+      generates Parse/sym.java from this list. Note the lexer's naming:
+      & is AND, | is OR, && is ANDAND, || is OROR, % is MOD, ^ is XOR.
+      SWITCH, CASE, DEFAULT, SIGNED, UNSIGNED, HASH, HASHHASH are returned
+      by the lexer but not used by the grammar (CUP warns about them).
+   ====================================================================== */
+terminal String  ID, INTLIT, CHARLIT, STRING;
 
-non terminal Absyn.Exp          Exp;
-non terminal Absyn.Var          Var;
+terminal AUTO, BREAK, CASE, CHAR, CONST, CONTINUE, DEFAULT, DO, DOUBLE, ELSE,
+         ENUM, EXTERN, FLOAT, FOR, FUN, GOTO, IF, INT, LONG, REGISTER, RETURN,
+         SHORT, SIGNED, SIZEOF, STATIC, STRUCT, SWITCH, TYPEDEF, UNION,
+         UNSIGNED, VAR, VOID, VOLATILE, WHILE;
 
-start with Exp;
+terminal LPAREN, RPAREN, LBRACK, RBRACK, LBRACE, RBRACE, DOT, ARROW,
+         INC, DEC, AND, TIMES, PLUS, MINUS, TILDE, NOT, DIVIDE, MOD,
+         SHL, SHR, LT, GT, LE, GE, EQ, NEQ, XOR, OR, ANDAND, OROR,
+         QUESTION, COLON, SEMICOLON, ELLIPSIS, COMMA,
+         ASSIGN, TIMESASSIGN, DIVASSIGN, MODASSIGN, PLUSASSIGN, MINUSASSIGN,
+         SHLASSIGN, SHRASSIGN, ANDASSIGN, XORASSIGN, ORASSIGN,
+         HASH, HASHHASH;
 
-Exp ::= error:e
-	  {: RESULT = new Absyn.SeqExp(eleft, null); :}
-	| Var:v
-	  {: RESULT = new Absyn.VarExp(vleft, v); :}
-	;
+/* ---------------- non terminals ---------------- */
+non terminal Absyn.DecList          program, top_declaration_list,
+                                    declaration_list, struct_or_union_declarator,
+                                    struct_declaration_list;
+non terminal Absyn.Dec              top_declaration, declaration;
+non terminal Symbol.Symbol          name, bitfield_value;
+non terminal Absyn.DescriptorList   bitfield_list;
+non terminal Absyn.Type             type, type_name;
+non terminal Integer                pointer_list;
+non terminal Absyn.ExpList          brackets_list, empty_array_type_list,
+                                    expression_array_type_list;
+non terminal Absyn.Initializer      initialization, initializer;
+non terminal Absyn.InitializerList  initializer_list;
+non terminal Absyn.ParamList        parameters, type_parameters,
+                                    parameter_list, parameter_type_list;
+non terminal Boolean                struct_or_union;
+non terminal Absyn.EnumeratorList   enumerator_list;
+non terminal Absyn.Enumerator       enumerator;
 
-Var ::=   ID:n
-	  {: RESULT = new Absyn.SimpleVar(nleft, sym(n)); :}
-	;
+non terminal Absyn.Statement        statement, labeled_statement, expression_statement,
+                                    selection_statement, iteration_statement,
+                                    jump_statement;
+non terminal Absyn.CompoundStatement compound_statement;
+non terminal Absyn.StatementList    statement_list;
+
+non terminal Absyn.Exp              primary_expression, postfix_expression,
+                                    unary_expression, cast_expression,
+                                    binary_expression, conditional_expression,
+                                    assignment_expression, expression,
+                                    expression_opt, constant_expression;
+non terminal Absyn.ExpList          argument_expression_list;
+non terminal Integer                unary_operator, assignment_operator;
+
+/* ----------------------------------------------------------------------
+   Precedence: lowest first. These resolve the shift/reduce conflicts of
+   the ambiguous rule  binary_expression ::= binary_expression OP
+   binary_expression  (one rule per C binary operator). "left" makes
+   a - b - c group as (a - b) - c. The levels are the C89 levels from
+   logical-OR (lowest) up to multiplicative (highest).
+   ELSE is deliberately NOT given a precedence: the dangling-else
+   conflict is left for CUP to resolve by shifting (see README).
+   ---------------------------------------------------------------------- */
+precedence left OROR;
+precedence left ANDAND;
+precedence left OR;
+precedence left XOR;
+precedence left AND;
+precedence left EQ, NEQ;
+precedence left LT, GT, LE, GE;
+precedence left SHL, SHR;
+precedence left PLUS, MINUS;
+precedence left TIMES, DIVIDE, MOD;
+
+start with program;
+
+/* ======================================================================
+   2. Declarations - the course's "Changes to C Declarations" grammar,
+      using the same nonterminal names.
+   ====================================================================== */
+program ::= top_declaration_list:l
+              {: RESULT = l; :}
+          ;
+
+top_declaration_list ::= /* empty */
+              {: RESULT = null; :}
+          | top_declaration_list:l top_declaration:d
+              {: RESULT = append(l, d); :}
+          ;
+
+/* Error productions live on this top-level wrapper, not on "declaration",
+   because "declaration" is also used inside compound statements, where
+   "declaration ::= error SEMICOLON" would be a reduce/reduce conflict
+   with "statement ::= error SEMICOLON". A bad top-level item becomes null
+   (printed as "null") and parsing continues with the next one. */
+top_declaration ::= declaration:d
+              {: RESULT = d; :}
+          | error SEMICOLON
+              {: RESULT = null; :}
+          | error RBRACE
+              {: RESULT = null; :}
+          ;
+
+declaration ::= VAR:v bitfield_list:b type:t name:n initialization:i SEMICOLON
+              {: RESULT = new Absyn.VarDec(vleft, b, t, n, i); :}
+          | FUN:f bitfield_list:b type:t name:n parameters:p compound_statement:c
+              {: RESULT = new Absyn.FunDec(fleft, b, t, n, p, c); :}
+          | FUN:f bitfield_list:b type:t name:n type_parameters:p SEMICOLON
+              {: RESULT = new Absyn.FunProtoDec(fleft, b, t, n, p); :}
+          | TYPEDEF:td type:t name:n SEMICOLON
+              {: RESULT = new Absyn.TypedefDec(tdleft, t, n); :}
+          | bitfield_list:b struct_or_union:u name:n struct_or_union_declarator:m
+              {: RESULT = new Absyn.StructUnionDec(nleft, b, u.booleanValue(), n, m); :}
+          | ENUM:e ID:i LBRACE enumerator_list:l RBRACE
+              {: RESULT = new Absyn.EnumDec(eleft, sym(i), l); :}
+          /* error recovery inside a var/typedef: skip to the semicolon */
+          | VAR:v error SEMICOLON
+              {: RESULT = null; :}
+          | TYPEDEF:td error SEMICOLON
+              {: RESULT = null; :}
+          ;
+
+name ::= ID:n
+              {: RESULT = sym(n); :}
+          ;
+
+/* right-recursive exactly as in the handout; this builds the
+   DescriptorList (a head/tail list) in source order */
+bitfield_list ::= /* empty */
+              {: RESULT = null; :}
+          | bitfield_value:v bitfield_list:l
+              {: RESULT = new Absyn.DescriptorList(v, l); :}
+          ;
+
+bitfield_value ::= CONST    {: RESULT = sym("const"); :}
+          |  VOLATILE        {: RESULT = sym("volatile"); :}
+          |  EXTERN          {: RESULT = sym("extern"); :}
+          |  STATIC          {: RESULT = sym("static"); :}
+          |  AUTO            {: RESULT = sym("auto"); :}
+          |  REGISTER        {: RESULT = sym("register"); :}
+          ;
+
+/* type -> type_name type_augments | type_name
+   type_augments -> pointer_list | brackets_list | pointer_list brackets_list
+   (type_augments is inlined as the three alternatives below) */
+type ::= type_name:t
+              {: RESULT = t; :}
+          | type_name:t pointer_list:p
+              {: RESULT = buildType(t, p.intValue(), null); :}
+          | type_name:t brackets_list:b
+              {: RESULT = buildType(t, 0, b); :}
+          | type_name:t pointer_list:p brackets_list:b
+              {: RESULT = buildType(t, p.intValue(), b); :}
+          ;
+
+pointer_list ::= TIMES
+              {: RESULT = Integer.valueOf(1); :}
+          | pointer_list:p TIMES
+              {: RESULT = Integer.valueOf(p.intValue() + 1); :}
+          ;
+
+/* brackets are all empty or all sized - never mixed */
+brackets_list ::= empty_array_type_list:l
+              {: RESULT = l; :}
+          | expression_array_type_list:l
+              {: RESULT = l; :}
+          ;
+
+empty_array_type_list ::= LBRACK RBRACK
+              {: RESULT = append((Absyn.ExpList) null, (Absyn.Exp) null); :}
+          | empty_array_type_list:l LBRACK RBRACK
+              {: RESULT = append(l, (Absyn.Exp) null); :}
+          ;
+
+expression_array_type_list ::= LBRACK constant_expression:e RBRACK
+              {: RESULT = append((Absyn.ExpList) null, e); :}
+          | expression_array_type_list:l LBRACK constant_expression:e RBRACK
+              {: RESULT = append(l, e); :}
+          ;
+
+/* VOID CHAR SHORT INT LONG FLOAT DOUBLE are NameTypes; ENUM ID is an
+   EnumType; a bare ID is a typedef (or struct/union) name. */
+type_name ::= VOID:k   {: RESULT = new Absyn.NameType(kleft, sym("void")); :}
+          |  CHAR:k    {: RESULT = new Absyn.NameType(kleft, sym("char")); :}
+          |  SHORT:k   {: RESULT = new Absyn.NameType(kleft, sym("short")); :}
+          |  INT:k     {: RESULT = new Absyn.NameType(kleft, sym("int")); :}
+          |  LONG:k    {: RESULT = new Absyn.NameType(kleft, sym("long")); :}
+          |  FLOAT:k   {: RESULT = new Absyn.NameType(kleft, sym("float")); :}
+          |  DOUBLE:k  {: RESULT = new Absyn.NameType(kleft, sym("double")); :}
+          |  ENUM:k ID:n
+              {: RESULT = new Absyn.EnumType(kleft, sym(n)); :}
+          |  ID:n
+              {: RESULT = new Absyn.NameType(nleft, sym(n)); :}
+          ;
+
+initialization ::= /* empty */
+              {: RESULT = null; :}
+          | ASSIGN initializer:i
+              {: RESULT = i; :}
+          ;
+
+initializer ::= assignment_expression:e
+              {: RESULT = new Absyn.ExpInit(eleft, e); :}
+          | LBRACE:b initializer_list:l RBRACE
+              {: RESULT = new Absyn.ListInit(bleft, l); :}
+          ;
+
+initializer_list ::= initializer:i
+              {: RESULT = append((Absyn.InitializerList) null, i); :}
+          | initializer_list:l COMMA initializer:i
+              {: RESULT = append(l, i); :}
+          ;
+
+struct_or_union ::= STRUCT {: RESULT = Boolean.FALSE; :}
+          |  UNION         {: RESULT = Boolean.TRUE; :}
+          ;
+
+struct_or_union_declarator ::= LBRACE struct_declaration_list:l RBRACE
+              {: RESULT = l; :}
+          ;
+
+/* members: "type name ;" - no modifiers, no initializer */
+struct_declaration_list ::= type:t name:n SEMICOLON
+              {: RESULT = append((Absyn.DecList) null,
+                                 new Absyn.VarDec(tleft, null, t, n, null)); :}
+          | struct_declaration_list:l type:t name:n SEMICOLON
+              {: RESULT = append(l, new Absyn.VarDec(tleft, null, t, n, null)); :}
+          ;
+
+enumerator_list ::= enumerator:e
+              {: RESULT = append((Absyn.EnumeratorList) null, e); :}
+          | enumerator_list:l COMMA enumerator:e
+              {: RESULT = append(l, e); :}
+          ;
+
+enumerator ::= ID:n
+              {: RESULT = new Absyn.Enumerator(nleft, sym(n), null); :}
+          | ID:n ASSIGN constant_expression:e
+              {: RESULT = new Absyn.Enumerator(nleft, sym(n), e); :}
+          ;
+
+/* Definitions name every parameter; prototypes (type_parameters) list
+   types only. "..." becomes a final Param with ellipsis=true.
+   Both have a "( )" form. That is not a conflict: after "( )" a
+   definition is followed by "{" and a prototype by ";", so the one
+   token of lookahead picks the right reduction. */
+parameters ::= LPAREN parameter_list:l RPAREN
+              {: RESULT = l; :}
+          | LPAREN parameter_list:l COMMA ELLIPSIS:e RPAREN
+              {: RESULT = append(l, new Absyn.Param(eleft)); :}
+          | LPAREN RPAREN
+              {: RESULT = null; :}
+          ;
+
+parameter_list ::= type:t name:n
+              {: RESULT = append((Absyn.ParamList) null, new Absyn.Param(tleft, t, n)); :}
+          | parameter_list:l COMMA type:t name:n
+              {: RESULT = append(l, new Absyn.Param(tleft, t, n)); :}
+          ;
+
+type_parameters ::= LPAREN parameter_type_list:l RPAREN
+              {: RESULT = l; :}
+          | LPAREN parameter_type_list:l COMMA ELLIPSIS:e RPAREN
+              {: RESULT = append(l, new Absyn.Param(eleft)); :}
+          | LPAREN RPAREN
+              {: RESULT = null; :}
+          ;
+
+parameter_type_list ::= type:t
+              {: RESULT = append((Absyn.ParamList) null, new Absyn.Param(tleft, t, null)); :}
+          | parameter_type_list:l COMMA type:t
+              {: RESULT = append(l, new Absyn.Param(tleft, t, null)); :}
+          ;
+
+/* ======================================================================
+   3. Statements - C89 section 3.6 without switch / case / default
+   ====================================================================== */
+statement ::= labeled_statement:s    {: RESULT = s; :}
+          |  compound_statement:s    {: RESULT = s; :}
+          |  expression_statement:s  {: RESULT = s; :}
+          |  selection_statement:s   {: RESULT = s; :}
+          |  iteration_statement:s   {: RESULT = s; :}
+          |  jump_statement:s        {: RESULT = s; :}
+          /* error recovery: skip a bad statement up to its semicolon */
+          |  error SEMICOLON         {: RESULT = null; :}
+          ;
+
+labeled_statement ::= ID:l COLON statement:s
+              {: RESULT = new Absyn.LabeledStatement(lleft, sym(l), s); :}
+          ;
+
+/* { declaration-list(opt) statement-list(opt) }  - declarations first */
+compound_statement ::= LBRACE:b declaration_list:d statement_list:s RBRACE
+              {: RESULT = new Absyn.CompoundStatement(bleft, d, s); :}
+          ;
+
+declaration_list ::= /* empty */
+              {: RESULT = null; :}
+          | declaration_list:l declaration:d
+              {: RESULT = append(l, d); :}
+          ;
+
+statement_list ::= /* empty */
+              {: RESULT = null; :}
+          | statement_list:l statement:s
+              {: RESULT = append(l, s); :}
+          ;
+
+/* an empty statement ";" is an ExpStatement with a null expression */
+expression_statement ::= SEMICOLON:s
+              {: RESULT = new Absyn.ExpStatement(sleft, null); :}
+          | expression:e SEMICOLON
+              {: RESULT = new Absyn.ExpStatement(eleft, e); :}
+          ;
+
+/* Dangling else: in "if (a) if (b) x; else y;" the parser can either
+   reduce the inner if (else goes to the outer if) or shift ELSE (else
+   goes to the inner if). This is the one S/R conflict we leave in the
+   grammar; CUP's default is to shift, which is exactly C's rule. */
+selection_statement ::= IF:i LPAREN expression:e RPAREN statement:s
+              {: RESULT = new Absyn.IfElseStatement(ileft, e, s, null); :}
+          | IF:i LPAREN expression:e RPAREN statement:s1 ELSE statement:s2
+              {: RESULT = new Absyn.IfElseStatement(ileft, e, s1, s2); :}
+          ;
+
+iteration_statement ::= WHILE:w LPAREN expression:e RPAREN statement:s
+              {: RESULT = new Absyn.WhileStatement(wleft, e, s); :}
+          | DO:d statement:s WHILE LPAREN expression:e RPAREN SEMICOLON
+              {: RESULT = new Absyn.DoWhileStatement(dleft, s, e); :}
+          | FOR:f LPAREN expression_opt:a SEMICOLON expression_opt:b SEMICOLON
+                  expression_opt:c RPAREN statement:s
+              {: RESULT = new Absyn.ForStatement(fleft, a, b, c, s); :}
+          ;
+
+jump_statement ::= GOTO:g ID:l SEMICOLON
+              {: RESULT = new Absyn.GotoStatement(gleft, sym(l)); :}
+          | CONTINUE:c SEMICOLON
+              {: RESULT = new Absyn.ContinueStatement(cleft); :}
+          | BREAK:b SEMICOLON
+              {: RESULT = new Absyn.BreakStatement(bleft); :}
+          | RETURN:r expression_opt:e SEMICOLON
+              {: RESULT = new Absyn.ReturnStatement(rleft, e); :}
+          ;
+
+/* ======================================================================
+   4. Expressions - C89 section 3.3
+      Unary, postfix, conditional, assignment and comma keep the C89
+      layered structure. The ten binary levels are folded into one
+      ambiguous rule disambiguated by the precedence declarations above.
+   ====================================================================== */
+primary_expression ::= ID:n
+              {: RESULT = new Absyn.IdExp(nleft, sym(n)); :}
+          | INTLIT:i
+              {: RESULT = new Absyn.IntExp(ileft, intValue(i)); :}
+          | CHARLIT:c
+              {: RESULT = new Absyn.CharExp(cleft, c); :}
+          | STRING:s
+              {: RESULT = new Absyn.StringExp(sleft, s); :}
+          /* parentheses are kept in the tree, as the handout asks */
+          | LPAREN:p expression:e RPAREN
+              {: RESULT = new Absyn.ParenExp(pleft, e); :}
+          /* error recovery inside parentheses */
+          | LPAREN error RPAREN
+              {: RESULT = null; :}
+          ;
+
+/* Function calls are by name only (CallExp holds a Symbol): function
+   pointers are excluded by the assignment. */
+postfix_expression ::= primary_expression:e
+              {: RESULT = e; :}
+          | postfix_expression:a LBRACK expression:i RBRACK
+              {: RESULT = new Absyn.SubscriptExp(aleft, a, i); :}
+          | ID:f LPAREN RPAREN
+              {: RESULT = new Absyn.CallExp(fleft, sym(f), null); :}
+          | ID:f LPAREN argument_expression_list:l RPAREN
+              {: RESULT = new Absyn.CallExp(fleft, sym(f), l); :}
+          | postfix_expression:r DOT ID:n
+              {: RESULT = new Absyn.MemberExp(rleft, r, sym(n), false); :}
+          | postfix_expression:r ARROW ID:n
+              {: RESULT = new Absyn.MemberExp(rleft, r, sym(n), true); :}
+          | postfix_expression:e INC
+              {: RESULT = new Absyn.UnOpExp(eleft, Absyn.UnOpExp.POSTINC, e); :}
+          | postfix_expression:e DEC
+              {: RESULT = new Absyn.UnOpExp(eleft, Absyn.UnOpExp.POSTDEC, e); :}
+          ;
+
+argument_expression_list ::= assignment_expression:e
+              {: RESULT = append((Absyn.ExpList) null, e); :}
+          | argument_expression_list:l COMMA assignment_expression:e
+              {: RESULT = append(l, e); :}
+          ;
+
+/* "sizeof unary-expression" is excluded by the assignment, so after
+   SIZEOF only "( type )" can follow - sizeof(x) reads x as a type name. */
+unary_expression ::= postfix_expression:e
+              {: RESULT = e; :}
+          | INC:o unary_expression:e
+              {: RESULT = new Absyn.UnOpExp(oleft, Absyn.UnOpExp.PREINC, e); :}
+          | DEC:o unary_expression:e
+              {: RESULT = new Absyn.UnOpExp(oleft, Absyn.UnOpExp.PREDEC, e); :}
+          | unary_operator:o cast_expression:e
+              {: RESULT = new Absyn.UnOpExp(oleft, o.intValue(), e); :}
+          | SIZEOF:s LPAREN type:t RPAREN
+              {: RESULT = new Absyn.SizeofTypeExp(sleft, t); :}
+          ;
+
+unary_operator ::= AND  {: RESULT = Integer.valueOf(Absyn.UnOpExp.ADDR); :}
+          |  TIMES      {: RESULT = Integer.valueOf(Absyn.UnOpExp.DEREF); :}
+          |  PLUS       {: RESULT = Integer.valueOf(Absyn.UnOpExp.POS); :}
+          |  MINUS      {: RESULT = Integer.valueOf(Absyn.UnOpExp.NEG); :}
+          |  TILDE      {: RESULT = Integer.valueOf(Absyn.UnOpExp.BITNOT); :}
+          |  NOT        {: RESULT = Integer.valueOf(Absyn.UnOpExp.NOT); :}
+          ;
+
+/* "( type-name ) cast-expression" is excluded by the assignment */
+cast_expression ::= unary_expression:e
+              {: RESULT = e; :}
+          ;
+
+binary_expression ::= cast_expression:e
+              {: RESULT = e; :}
+          | binary_expression:a TIMES  binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.MUL, b); :}
+          | binary_expression:a DIVIDE binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.DIV, b); :}
+          | binary_expression:a MOD    binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.MOD, b); :}
+          | binary_expression:a PLUS   binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.PLUS, b); :}
+          | binary_expression:a MINUS  binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.MINUS, b); :}
+          | binary_expression:a SHL    binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.SHL, b); :}
+          | binary_expression:a SHR    binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.SHR, b); :}
+          | binary_expression:a LT     binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.LT, b); :}
+          | binary_expression:a GT     binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.GT, b); :}
+          | binary_expression:a LE     binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.LE, b); :}
+          | binary_expression:a GE     binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.GE, b); :}
+          | binary_expression:a EQ     binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.EQ, b); :}
+          | binary_expression:a NEQ    binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.NE, b); :}
+          | binary_expression:a AND    binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.BITAND, b); :}
+          | binary_expression:a XOR    binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.BITXOR, b); :}
+          | binary_expression:a OR     binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.BITOR, b); :}
+          | binary_expression:a ANDAND binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.AND, b); :}
+          | binary_expression:a OROR   binary_expression:b
+              {: RESULT = new Absyn.BinOpExp(aleft, a, Absyn.BinOpExp.OR, b); :}
+          ;
+
+conditional_expression ::= binary_expression:e
+              {: RESULT = e; :}
+          | binary_expression:t QUESTION expression:a COLON conditional_expression:b
+              {: RESULT = new Absyn.CondExp(tleft, t, a, b); :}
+          ;
+
+/* As in C89 the left side of an assignment must be a unary_expression,
+   so "a + b = c" is a syntax error. Assignment is right-associative
+   because the right side is another assignment_expression. */
+assignment_expression ::= conditional_expression:e
+              {: RESULT = e; :}
+          | unary_expression:l assignment_operator:o assignment_expression:r
+              {: RESULT = new Absyn.AssignExp(lleft, l, o.intValue(), r); :}
+          ;
+
+assignment_operator ::= ASSIGN {: RESULT = Integer.valueOf(Absyn.AssignExp.ASSIGN); :}
+          |  TIMESASSIGN   {: RESULT = Integer.valueOf(Absyn.AssignExp.MUL); :}
+          |  DIVASSIGN     {: RESULT = Integer.valueOf(Absyn.AssignExp.DIV); :}
+          |  MODASSIGN     {: RESULT = Integer.valueOf(Absyn.AssignExp.MOD); :}
+          |  PLUSASSIGN    {: RESULT = Integer.valueOf(Absyn.AssignExp.PLUS); :}
+          |  MINUSASSIGN   {: RESULT = Integer.valueOf(Absyn.AssignExp.MINUS); :}
+          |  SHLASSIGN     {: RESULT = Integer.valueOf(Absyn.AssignExp.SHL); :}
+          |  SHRASSIGN     {: RESULT = Integer.valueOf(Absyn.AssignExp.SHR); :}
+          |  ANDASSIGN     {: RESULT = Integer.valueOf(Absyn.AssignExp.AND); :}
+          |  XORASSIGN     {: RESULT = Integer.valueOf(Absyn.AssignExp.XOR); :}
+          |  ORASSIGN      {: RESULT = Integer.valueOf(Absyn.AssignExp.OR); :}
+          ;
+
+expression ::= assignment_expression:e
+              {: RESULT = e; :}
+          | expression:a COMMA assignment_expression:b
+              {: RESULT = new Absyn.CommaExp(aleft, a, b); :}
+          ;
+
+expression_opt ::= /* empty */
+              {: RESULT = null; :}
+          | expression:e
+              {: RESULT = e; :}
+          ;
+
+constant_expression ::= conditional_expression:e
+              {: RESULT = e; :}
+          ;
