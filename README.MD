@@ -5,10 +5,10 @@
 I handled the absyn portion of the project, with the assistance of Claude. I found ai tools to be very helpful, especially in understanding the differences between tiger and C. In print.java, I chose to modify the existing code method by method and then used it to help me code the C only structs afterwards.
 
 ### Exp-Stm - Jonathan
-I wrote the expression and statement half of `Parse/Grm.cup` with the assistance of Claude, and the test files `tests/expressions.c` and `tests/statements.c`. I gave Claude the handout, the slides, our lexer, and Abdul's Absyn classes, and had it write the CUP rules so every action builds one of Abdul's nodes. I then built it, ran the tests, and checked the printed trees by hand (operator precedence, associativity, the dangling else). AI was very useful here, mostly for explaining the shift/reduce conflicts CUP reported and for spotting two bugs in the old CUP version we were given (described below).
+I handled the expression and statement portion of `Parse/Grm.cup`, with the assistance of Claude, and wrote the tests in `tests/expressions.c` and `tests/statements.c`. I found AI tools to be helpful, especially for understanding the shift/reduce conflicts CUP reported and how precedence declarations resolve them. I built and tested the grammar and checked the printed trees for precedence, associativity, and the dangling else.
 
 ### Decls - Jonathan
-I wrote the declaration half of `Parse/Grm.cup` with the assistance of Claude, following the professor's "Changes to C Declarations" grammar rule for rule, and the test files `tests/declarations.c` and `tests/errors.c`. I also added the error-recovery productions, updated `Parse/Parse.java` and `Parse/Main.java` so the parser returns and prints a `DecList`, and updated the `Makefile`. Small additions to Abdul's Absyn: a `ParenExp` class (the handout asks that parentheses show up in the tree) with its print method, and a one-word fix so a function body prints indented.
+I handled the declaration portion of `Parse/Grm.cup`, with the assistance of Claude, following the professor's simplified declaration grammar, and wrote `tests/declarations.c` and `tests/errors.c`. I also added the error recovery, updated `Parse/Parse.java`, `Parse/Main.java` and the `Makefile`, and made two small additions to the Absyn package: a `ParenExp` class (the handout asks that parentheses show up in the tree) and a fix so function bodies print indented.
 
 ## Build and run
 
