@@ -156,6 +156,13 @@ public class Print {
     say(")");
   }
 
+  // parenthesized expression, kept so the tree shows the source's parens
+  void prExp(ParenExp e, int d) {
+    sayln("ParenExp(");
+    prExp(e.exp, d+1);
+    say(")");
+  }
+
   void prExp(CommaExp e, int d) {
     sayln("CommaExp(");
     prExp(e.left, d+1);
@@ -186,6 +193,7 @@ public class Print {
     else if (e instanceof SizeofExp) prExp((SizeofExp) e, d);
     else if (e instanceof SizeofTypeExp) prExp((SizeofTypeExp) e, d);
     else if (e instanceof CommaExp) prExp((CommaExp) e, d);
+    else if (e instanceof ParenExp) prExp((ParenExp) e, d);
     else throw new Error("Print.prExp");
   }
 
@@ -201,7 +209,7 @@ public class Print {
     sayln(",");
     prParamList(f.params, i+1);
     sayln(",");
-    prStm(f.body, i+1);
+    prStm((Statement) f.body, i+1);  // cast so the dispatcher indents it
     say(")");
   }
 
