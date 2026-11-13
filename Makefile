@@ -1,7 +1,7 @@
 JFLAGS=-g
 
 all: Parse/Grm.java Parse/Yylex.java
-	javac ${JFLAGS} ErrorMsg/*.java Symbol/*.java Absyn/*.java Parse/*.java
+	javac ${JFLAGS} ErrorMsg/*.java Symbol/*.java Absyn/*.java Parse/*.java Temp/*.java Util/*.java Frame/*.java Mips/*.java Translate/*.java Types/*.java FindEscape/*.java Semant/*.java
 
 # CUP builds Grm.java and sym.java. -expect 1 = the dangling-else S/R conflict.
 # PackTables then shrinks the parse tables so javac does not fail with
