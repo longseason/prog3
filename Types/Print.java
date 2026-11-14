@@ -1,7 +1,5 @@
 package Types;
 
-import javax.print.DocFlavor.STRING;
-
 public class Print {
   java.io.PrintWriter out;
 

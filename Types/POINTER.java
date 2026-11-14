@@ -11,6 +11,6 @@ public class POINTER extends Type {
         }
         
         POINTER other = (POINTER) actual;
-        return element.coerceTo(other.element);
+        return sameType(element, other.element);
     }
 }

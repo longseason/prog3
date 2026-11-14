@@ -15,7 +15,7 @@ public class Main {
       semant.transProg(parse.absyn);
       PrintWriter writer = new PrintWriter(System.out);
       Absyn.Print printer = new Absyn.Print(writer);
-      printer.prExp(parse.absyn, 0);
+      printer.prDecList(parse.absyn, 0);
       writer.println();
       writer.flush();
     }

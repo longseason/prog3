@@ -145,7 +145,7 @@ public class Semant {
       return transDec((Absyn.VarDec)d);
 
     // type def line
-    if (d instanceof Absyn.TypeDec)
+    if (d instanceof Absyn.TypedefDec)
       return transDec((Absyn.TypedefDec)d);
 
     // struct def line
