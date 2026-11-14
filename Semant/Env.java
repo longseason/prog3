@@ -31,6 +31,7 @@ class Env {
     venv = new Table();
     tenv = new Table();
 
+/*    
     // initialize tenv and venv with predefined identifiers
     NAME INT = new NAME(sym("int"));
     INT.bind(Semant.INT);
@@ -55,5 +56,6 @@ class Env {
 					STRING));
     venv.put(sym("not"),       FunEntry(RECORD(sym("i"), INT), INT));
     venv.put(sym("exit"),      FunEntry(RECORD(sym("i"), INT), VOID));
+  */
   }
 }

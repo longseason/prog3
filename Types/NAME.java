@@ -18,6 +18,9 @@ public class NAME extends Type {
      
    public Type actual() {return binding.actual();}
 
+   // new helper method to check if the actual type is a number
+   public boolean isNumber() {return actual().isNumber();}
+
    public boolean coerceTo(Type t) {
 	return this.actual().coerceTo(t);
    }
