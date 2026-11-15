@@ -31,6 +31,9 @@ public class Semant {
   // replace STRING and NIL with CHAR
   static final Types.CHAR   CHAR   = new Types.CHAR();
 
+  // return type of the current function being checked 
+  Type returnType = VOID;
+
   private Exp checkInt(ExpTy et, int pos) {
     if (!INT.coerceTo(et.ty))
       error(pos, "integer required");
@@ -424,6 +427,19 @@ public class Semant {
     // struct def line
     if (d instanceof Absyn.StructUnionDec)
       return transDec((Absyn.StructUnionDec)d);
+
+    // function prototype line
+    if (d instanceof Absyn.FunProtoDec)
+      return transDec((Absyn.FunProtoDec)d);
+
+    // functign definition line
+    if (d instanceof Absyn.FunDec)
+      return transDec((Absyn.FunDec)d);
+
+    // enum line
+    if (d instanceof Absyn.EnumDec)
+      return transDec((Absyn.EnumDec)d);
+
     throw new Error("Semant.transDec");
   }
 
@@ -434,6 +450,67 @@ public class Semant {
     Absyn.VarDec m = (Absyn.VarDec) l.head;
     return new Types.RECORD(m.name, transTy(m.type), transFields(l.tail));
   }
+
+  // makes a function parameter list into a RECORD chain
+  Types.RECORD transParams(Absyn.ParamList l) {
+    if (l == null) return null;
+    if (l.head.ellipsis) {
+      return transParams(l.tail);
+    }
+    return new Types.RECORD(l.head.name, transTy(l.head.type), transParams(l.tail));
+  }
+
+  Exp transDec(Absyn.FunProtoDec d) {
+    Types.RECORD formals = transParams(d.params);
+    Type resullts = transTy(d.type);
+    env.venv.put(d.name, new FunEntry(formals, resullts));
+    return null;
+  }
+
+  Exp transDec(Absyn.FunDec d) {
+    // taken from earlier function prototype handling
+    Types.RECORD formals = transParams(d.params);
+    Type results = transTy(d.type);
+    env.venv.put(d.name, new FunEntry(formals, results));
+
+    env.venv.beginScope();
+    env.tenv.beginScope();
+
+    for (Types.RECORD f = formals; f != null; f = f.tail) {
+      env.venv.put(f.fieldName, new VarEntry(f.fieldType));
+    }
+
+    Type saved = returnType;
+    returnType = results;
+
+    for (Absyn.DecList l = d.body.decs; l != null; l = l.tail) {
+      transDec(l.head);
+    }
+
+    // statements come here
+
+    returnType = saved;
+
+    env.venv.endScope();
+    env.tenv.endScope();
+
+    return null;
+  }
+
+  // i originally missed the need for a enum handling method, and this was caught with ai assistance
+  Exp transDec(Absyn.EnumDec d) {
+    for (Absyn.EnumeratorList l = d.list; l != null; l = l.tail) {
+      if (l.head.value != null) {
+        ExpTy et = transExp(l.head.value);
+        if (!et.ty.isNumber()) {
+          error(l.head.pos, "enum value for " + l.head.name + " must be a number");
+        }
+      }
+      env.venv.put(l.head.name, new VarEntry(INT));
+    }
+    return null;
+  }
+
 
   // binds new name to trnaslated type to store in tenv
   Exp transDec(Absyn.TypedefDec d) {
