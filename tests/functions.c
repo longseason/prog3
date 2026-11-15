@@ -1,7 +1,7 @@
 enum Color { RED, GREEN = 5, BLUE = 'a' }
 
 fun int printf(char*, ...);
-fun int add(int a, int b);
+fun int add(int, int);
 
 fun int sum(int count) {
   var int i = count;

@@ -417,6 +417,8 @@ public class Semant {
   }
 
   Exp transDec(Absyn.Dec d) {
+    if (d == null) return null;
+
     if (d instanceof Absyn.VarDec)
       return transDec((Absyn.VarDec)d);
 
