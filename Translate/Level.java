@@ -8,14 +8,13 @@ public class Level {
   Frame.Frame frame;		// not public!
   public AccessList formals;
   public AccessList frameFormals;
+  // C has no nested functions, so there is no static link: the frame's
+  // formals are exactly the function's parameters
   public Level(Level parent, Symbol name, BoolList formals) {
-    this(parent, name, formals, false);
-  }
-  public Level(Level parent, Symbol name, BoolList formals, boolean leaf) {
     this.parent = parent;
-    this.frame = parent.frame.newFrame(name, new BoolList(!leaf, formals));
+    this.frame = parent.frame.newFrame(name, formals);
     frameFormals = allocFormals(this.frame.formals);
-    this.formals = frameFormals.tail;
+    this.formals = frameFormals;
   }
   private AccessList allocFormals(Frame.AccessList formals) {
     if (formals == null)
@@ -34,5 +33,9 @@ public class Level {
 
   public Access allocLocal(boolean escape) {
     return new Access(this, frame.allocLocal(escape));
+  }
+
+  public Access allocLocal(boolean escape, int words) {
+    return new Access(this, frame.allocLocal(escape, words));
   }
 }

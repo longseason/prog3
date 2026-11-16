@@ -10,9 +10,59 @@ public class Semant {
   Semant(Env e) {
     env = e;
   }
-  // second semant constructor, where frame isnt used til activation records
+  // second semant constructor, the frame is used for activation records
   public Semant(Frame.Frame frame, ErrorMsg.ErrorMsg err) {
     this(new Env(err));
+    this.frame = frame;
+  }
+
+  // ---- activation records ----
+  Frame.Frame frame;
+  Translate.Level root;      // parent of every function level
+  Translate.Level globals;   // where global variables are allocated
+  Translate.Level level;     // the level we are currently allocating in
+
+  private boolean isAggregate(Type t) {
+    Type a = t.actual();
+    return a instanceof Types.ARRAY || a instanceof Types.STRUCT;
+  }
+
+  // size of a type in words. ints, chars and pointers all take one word.
+  private java.util.HashSet<Type> sizing = new java.util.HashSet<Type>();
+  private int words(Type t) {
+    Type a = t.actual();
+    if (a instanceof Types.ARRAY) {
+      Types.ARRAY arr = (Types.ARRAY) a;
+      // an array with no size and no initializer is just one word
+      return arr.size <= 0 ? 1 : arr.size * words(arr.element);
+    }
+    if (a instanceof Types.STRUCT) {
+      Types.STRUCT st = (Types.STRUCT) a;
+      if (!sizing.add(st))               // a struct that contains itself
+        return 1;
+      int n = 0;
+      for (Types.RECORD f = st.fields; f != null; f = f.tail) {
+        int w = words(f.fieldType);
+        n = st.isUnion ? Math.max(n, w) : n + w;   // union members overlap
+      }
+      sizing.remove(st);
+      return Math.max(n, 1);
+    }
+    return 1;
+  }
+
+  // allocate a variable in the current level (null if we have no frame)
+  private Translate.Access alloc(boolean escape, Type t) {
+    if (level == null)
+      return null;
+    return level.allocLocal(escape, words(t));
+  }
+
+  // one boolean per parameter: does it escape?
+  private Util.BoolList escapes(Absyn.ParamList l) {
+    if (l == null) return null;
+    if (l.head.ellipsis) return escapes(l.tail);
+    return new Util.BoolList(l.head.escape, escapes(l.tail));
   }
 
   private boolean isTypeDec(Absyn.Dec d) {
@@ -21,6 +71,16 @@ public class Semant {
   }
 
   public void transProg(Absyn.DecList decs) {
+    // find the variables that escape before anything is allocated
+    new FindEscape.FindEscape(decs);
+
+    // globals get a level of their own; every function level hangs off root
+    if (frame != null) {
+      root = new Translate.Level(frame);
+      globals = new Translate.Level(root, Symbol.Symbol.symbol(".globals"), null);
+      level = globals;
+    }
+
     // C allows a function to be called before it is defined (forward reference),
     // so the top level is done in three passes:
     // 1. types, so that function headers can use them
@@ -643,11 +703,23 @@ public class Semant {
     entry.varargs = hasEllipsis(d.params);
     env.venv.put(d.name, entry);
 
+    // new level for this function, built from which parameters escape
+    Translate.Level savedLevel = level;
+    Translate.AccessList access = null;
+    if (root != null) {
+      level = new Translate.Level(root, d.name, escapes(d.params));
+      entry.level = level;
+      access = level.formals;
+    }
+    d.entry = entry;
+
     env.venv.beginScope();
     env.tenv.beginScope();
 
+    // each parameter gets the access the frame allocated for it
     for (Types.RECORD f = formals; f != null; f = f.tail) {
-      env.venv.put(f.fieldName, new VarEntry(f.fieldType));
+      env.venv.put(f.fieldName, new VarEntry(access == null ? null : access.head, f.fieldType));
+      if (access != null) access = access.tail;
     }
 
     Type saved = returnType;
@@ -678,6 +750,7 @@ public class Semant {
     gotos = savedGotos;
     loopDepth = savedDepth;
     returnType = saved;
+    level = savedLevel;
 
     env.venv.endScope();
     env.tenv.endScope();
@@ -793,7 +866,15 @@ public class Semant {
     if (d.init != null) {
       type = checkInit(type, d.init);
     }
-    env.venv.put(d.name, new VarEntry(type));
+    // arrays, structs and unions do not fit in a register, and globals
+    // always live in memory
+    if (isAggregate(type) || level == globals)
+      d.escape = true;
+
+    // allocate the variable before making its entry
+    VarEntry entry = new VarEntry(alloc(d.escape, type), type);
+    d.entry = entry;
+    env.venv.put(d.name, entry);
     return null;
   } 
 }

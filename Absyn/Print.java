@@ -211,6 +211,12 @@ public class Print {
     sayln(",");
     prStm((Statement) f.body, i+1);  // cast so the dispatcher indents it
     say(")");
+    // after Semant has run: the function's type and its frame
+    if (f.entry != null) {
+      sayln("");
+      indent(i);
+      new Semant.Print(out).prEntry(f.entry, i);
+    }
   }
 
   // adds desc + full type
@@ -224,6 +230,17 @@ public class Print {
     say(sym(v.name));
     sayln(",");
     prInit(v.init, i+1);
+    // after Semant has run: whether it escapes, its type and where it lives
+    if (v.entry != null) {
+      sayln(",");
+      indent(i+1);
+      say(v.escape);
+      say(")");
+      sayln("");
+      indent(i);
+      new Semant.Print(out).prEntry(v.entry, i);
+      return;
+    }
     say(")");
   }
 
@@ -427,6 +444,11 @@ public class Print {
       sayln(",");
       indent(d+1);
       say(sym(p.name));
+      if (p.escape) {
+        sayln(",");
+        indent(d+1);
+        say(p.escape);
+      }
       say(")");
     }
   }
