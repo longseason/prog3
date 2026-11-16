@@ -15,10 +15,35 @@ public class Semant {
     this(new Env(err));
   }
 
+  private boolean isTypeDec(Absyn.Dec d) {
+    return d instanceof Absyn.StructUnionDec || d instanceof Absyn.TypedefDec
+        || d instanceof Absyn.EnumDec;
+  }
+
   public void transProg(Absyn.DecList decs) {
+    // C allows a function to be called before it is defined (forward reference),
+    // so the top level is done in three passes:
+    // 1. types, so that function headers can use them
+    for (Absyn.DecList d = decs; d != null; d = d.tail)
+      if (isTypeDec(d.head))
+        transDec(d.head);
+
+    // 2. function headers
     for (Absyn.DecList d = decs; d != null; d = d.tail) {
-      transDec(d.head);
+      if (d.head instanceof Absyn.FunProtoDec) {
+        transDec(d.head);
+      } else if (d.head instanceof Absyn.FunDec) {
+        Absyn.FunDec f = (Absyn.FunDec) d.head;
+        FunEntry entry = new FunEntry(transParams(f.params), transTy(f.type));
+        entry.varargs = hasEllipsis(f.params);
+        env.venv.put(f.name, entry);
+      }
     }
+
+    // 3. variables and function bodies
+    for (Absyn.DecList d = decs; d != null; d = d.tail)
+      if (!isTypeDec(d.head) && !(d.head instanceof Absyn.FunProtoDec))
+        transDec(d.head);
   }
 
   private void error(int pos, String msg) {
@@ -33,6 +58,12 @@ public class Semant {
 
   // return type of the current function being checked 
   Type returnType = VOID;
+
+  // how many loops we are inside of, for break and continue
+  int loopDepth = 0;
+  // labels defined in the current function, and the gotos that still need checking
+  java.util.HashSet<Symbol.Symbol> labels = new java.util.HashSet<Symbol.Symbol>();
+  java.util.ArrayList<Absyn.GotoStatement> gotos = new java.util.ArrayList<Absyn.GotoStatement>();
 
   private Exp checkInt(ExpTy et, int pos) {
     if (!INT.coerceTo(et.ty))
@@ -307,7 +338,11 @@ public class Semant {
     int n = 1;
     while (formal != null && arg != null) {
       ExpTy et = transExp(arg.head);
-      if (!et.ty.coerceTo(formal.fieldType))
+      // an array parameter is really a pointer to its elements
+      Type want = formal.fieldType;
+      if (want.actual() instanceof Types.ARRAY)
+        want = new Types.POINTER(((Types.ARRAY) want.actual()).element);
+      if (!et.ty.coerceTo(want))
         error(pos(arg.head, e.pos), "argument " + n + " of " + e.func + " has the wrong type");
       formal = formal.tail;
       arg = arg.tail;
@@ -316,7 +351,9 @@ public class Semant {
     if (formal != null)
       error(e.pos, "too few arguments in call to " + e.func);
     if (arg != null) {
-      error(e.pos, "too many arguments in call to " + e.func);
+      // extra arguments are only allowed if the function was declared with ...
+      if (!f.varargs)
+        error(e.pos, "too many arguments in call to " + e.func);
       for (; arg != null; arg = arg.tail)
         transExp(arg.head);
     }
@@ -416,6 +453,127 @@ public class Semant {
     return new ExpTy(null, body.ty);
   }
 
+  // ---- statements ----
+  // statements have no type, so these return nothing
+
+  void transStm(Absyn.Statement s) {
+    if (s == null)                       // left behind by a syntax error
+      return;
+    else if (s instanceof Absyn.CompoundStatement)
+      transStm((Absyn.CompoundStatement)s);
+    else if (s instanceof Absyn.ExpStatement)
+      transStm((Absyn.ExpStatement)s);
+    else if (s instanceof Absyn.IfElseStatement)
+      transStm((Absyn.IfElseStatement)s);
+    else if (s instanceof Absyn.WhileStatement)
+      transStm((Absyn.WhileStatement)s);
+    else if (s instanceof Absyn.DoWhileStatement)
+      transStm((Absyn.DoWhileStatement)s);
+    else if (s instanceof Absyn.ForStatement)
+      transStm((Absyn.ForStatement)s);
+    else if (s instanceof Absyn.ReturnStatement)
+      transStm((Absyn.ReturnStatement)s);
+    else if (s instanceof Absyn.BreakStatement)
+      transStm((Absyn.BreakStatement)s);
+    else if (s instanceof Absyn.ContinueStatement)
+      transStm((Absyn.ContinueStatement)s);
+    else if (s instanceof Absyn.GotoStatement)
+      transStm((Absyn.GotoStatement)s);
+    else if (s instanceof Absyn.LabeledStatement)
+      transStm((Absyn.LabeledStatement)s);
+    else throw new Error("Semant.transStm");
+  }
+
+  // { declarations statements } gets its own scope
+  void transStm(Absyn.CompoundStatement s) {
+    env.venv.beginScope();
+    env.tenv.beginScope();
+    for (Absyn.DecList d = s.decs; d != null; d = d.tail)
+      transDec(d.head);
+    for (Absyn.StatementList l = s.stms; l != null; l = l.tail)
+      transStm(l.head);
+    env.venv.endScope();
+    env.tenv.endScope();
+  }
+
+  // nothing to check here other than the expression itself ( ; has no expression)
+  void transStm(Absyn.ExpStatement s) {
+    transExp(s.exp);
+  }
+
+  // the test of an if or a loop must be something that can be true or false
+  private void checkTest(Absyn.Exp test, int pos, String what) {
+    ExpTy et = transExp(test);
+    checkScalar(et, pos(test, pos), "condition of " + what);
+  }
+
+  void transStm(Absyn.IfElseStatement s) {
+    checkTest(s.test, s.pos, "if");
+    transStm(s.thenClause);
+    transStm(s.elseClause);
+  }
+
+  void transStm(Absyn.WhileStatement s) {
+    checkTest(s.test, s.pos, "while");
+    loopDepth++;
+    transStm(s.body);
+    loopDepth--;
+  }
+
+  void transStm(Absyn.DoWhileStatement s) {
+    loopDepth++;
+    transStm(s.body);
+    loopDepth--;
+    checkTest(s.test, s.pos, "do while");
+  }
+
+  // all three parts of a for are optional
+  void transStm(Absyn.ForStatement s) {
+    transExp(s.init);
+    if (s.test != null)
+      checkTest(s.test, s.pos, "for");
+    transExp(s.incr);
+    loopDepth++;
+    transStm(s.body);
+    loopDepth--;
+  }
+
+  // the returned value must match the return type of the function we are in
+  void transStm(Absyn.ReturnStatement s) {
+    boolean isVoid = returnType.actual() instanceof Types.VOID;
+    if (s.exp == null) {
+      if (!isVoid)
+        error(s.pos, "return needs a value in a non-void function");
+      return;
+    }
+    ExpTy et = transExp(s.exp);
+    if (isVoid && !(et.ty.actual() instanceof Types.VOID))
+      error(s.pos, "void function cannot return a value");
+    else if (!et.ty.coerceTo(returnType))
+      error(s.exp.pos, "returned value does not match the function's return type");
+  }
+
+  void transStm(Absyn.BreakStatement s) {
+    if (loopDepth == 0)
+      error(s.pos, "break outside of a loop");
+  }
+
+  void transStm(Absyn.ContinueStatement s) {
+    if (loopDepth == 0)
+      error(s.pos, "continue outside of a loop");
+  }
+
+  // checked at the end of the function, since the label may come later
+  void transStm(Absyn.GotoStatement s) {
+    gotos.add(s);
+  }
+
+  void transStm(Absyn.LabeledStatement s) {
+    if (!labels.add(s.label))
+      error(s.pos, "duplicate label " + s.label);
+    transStm(s.statement);
+  }
+
   Exp transDec(Absyn.Dec d) {
     if (d == null) return null;
 
@@ -462,10 +620,18 @@ public class Semant {
     return new Types.RECORD(l.head.name, transTy(l.head.type), transParams(l.tail));
   }
 
+  boolean hasEllipsis(Absyn.ParamList l) {
+    for (; l != null; l = l.tail)
+      if (l.head.ellipsis) return true;
+    return false;
+  }
+
   Exp transDec(Absyn.FunProtoDec d) {
     Types.RECORD formals = transParams(d.params);
     Type resullts = transTy(d.type);
-    env.venv.put(d.name, new FunEntry(formals, resullts));
+    FunEntry entry = new FunEntry(formals, resullts);
+    entry.varargs = hasEllipsis(d.params);
+    env.venv.put(d.name, entry);
     return null;
   }
 
@@ -473,7 +639,9 @@ public class Semant {
     // taken from earlier function prototype handling
     Types.RECORD formals = transParams(d.params);
     Type results = transTy(d.type);
-    env.venv.put(d.name, new FunEntry(formals, results));
+    FunEntry entry = new FunEntry(formals, results);
+    entry.varargs = hasEllipsis(d.params);
+    env.venv.put(d.name, entry);
 
     env.venv.beginScope();
     env.tenv.beginScope();
@@ -489,8 +657,26 @@ public class Semant {
       transDec(l.head);
     }
 
-    // statements come here
+    // each function has its own labels, and starts outside of any loop
+    java.util.HashSet<Symbol.Symbol> savedLabels = labels;
+    java.util.ArrayList<Absyn.GotoStatement> savedGotos = gotos;
+    int savedDepth = loopDepth;
+    labels = new java.util.HashSet<Symbol.Symbol>();
+    gotos = new java.util.ArrayList<Absyn.GotoStatement>();
+    loopDepth = 0;
 
+    for (Absyn.StatementList l = d.body.stms; l != null; l = l.tail) {
+      transStm(l.head);
+    }
+
+    // a goto can jump forward, so labels are checked once the whole body is done
+    for (Absyn.GotoStatement g : gotos)
+      if (!labels.contains(g.label))
+        error(g.pos, "undefined label " + g.label);
+
+    labels = savedLabels;
+    gotos = savedGotos;
+    loopDepth = savedDepth;
     returnType = saved;
 
     env.venv.endScope();
@@ -575,6 +761,13 @@ public class Semant {
           return expected;
       error(init.pos, "value does not match any union member");
       return expected;
+    }
+
+    // a single value may be wrapped in braces: var int x = {1};  (not for unions)
+    if (init instanceof Absyn.ListInit && !(t instanceof Types.STRUCT)) {
+      Absyn.InitializerList l = ((Absyn.ListInit) init).list;
+      if (l != null && l.tail == null)
+        return checkInit(expected, l.head);
     }
 
     if (init instanceof Absyn.ListInit) {
