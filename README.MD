@@ -3,6 +3,6 @@
 ## Team contribution
 ### Absyn - Abdul 
 
-### Expressions - Jonathan
+### Expressions, Statements, Activation Records - Jonathan
 
 ### ??? - Jalen
